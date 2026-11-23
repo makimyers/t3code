@@ -240,6 +240,8 @@ export const OrchestrationV2ProviderTurnTokenUsage = Schema.Struct({
   promptCacheTtlMs: Schema.optional(PositiveInt),
   autoCompactThreshold: Schema.optional(PositiveInt),
   promptCacheExpiresAt: Schema.optional(Schema.String),
+  /** Decode speed of the latest model reply: output tokens over the time from its first streamed token to its end. */
+  outputTokensPerSecond: Schema.optional(Schema.Number.check(Schema.isFinite())),
   updatedAt: Schema.String,
 });
 export type OrchestrationV2ProviderTurnTokenUsage =

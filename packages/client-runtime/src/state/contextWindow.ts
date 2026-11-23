@@ -39,6 +39,8 @@ export type ContextWindowSnapshot = NullableContextWindowUsage & {
   readonly remainingTokens: number | null;
   readonly usedPercentage: number | null;
   readonly remainingPercentage: number | null;
+  /** Decode speed of the latest reply, when the provider measures it. */
+  readonly outputTokensPerSecond?: number | null;
   readonly updatedAt: string;
 };
 
@@ -184,6 +186,7 @@ export function deriveLatestContextWindowSnapshot(
       compactsAutomatically: true,
       autoCompactThreshold: liveUsage.autoCompactThreshold ?? null,
       cost: null,
+      outputTokensPerSecond: liveUsage.outputTokensPerSecond ?? null,
       updatedAt: liveUsage.updatedAt,
     };
   }

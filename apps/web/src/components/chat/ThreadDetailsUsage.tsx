@@ -121,6 +121,10 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
   const m = useMessages();
   const locale = useLocale();
   const usedTokens = formatContextWindowTokens(usage.usedTokens);
+  const speed =
+    usage.outputTokensPerSecond != null && usage.outputTokensPerSecond > 0
+      ? Math.round(usage.outputTokensPerSecond).toLocaleString(locale)
+      : null;
   return (
     <ThreadDetailsSection
       headingId="thread-details-context-heading"
@@ -167,6 +171,24 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
             </>
           }
         />
+        {speed !== null ? (
+          <UsageRow
+            label={gt("Speed", { $context: "model output speed row label" })}
+            fill={null}
+            tone={null}
+            value={gt("{speed} tok/s", { speed })}
+            tooltip={
+              <>
+                <span className="text-foreground">
+                  {gt("Speed: {speed} tokens per second", { speed })}
+                </span>
+                <span className="text-muted-foreground">
+                  {gt("How fast the model wrote its latest reply, after reading the prompt.")}
+                </span>
+              </>
+            }
+          />
+        ) : null}
       </div>
     </ThreadDetailsSection>
   );
