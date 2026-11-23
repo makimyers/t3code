@@ -4294,6 +4294,66 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("reports the latest reply's output speed from its first streamed token", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      fake.queueState({
+        sessionFile: FAKE_SESSION_FILE,
+        model: { provider: "local", id: "qwen", contextWindow: 131_072 },
+      });
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      fake.queueStats({ contextUsage: { tokens: 1_301, contextWindow: 131_072 } });
+      yield* fake.emit({ type: "response", command: "prompt", success: true });
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "message_start", message: { role: "assistant" } });
+      // Prompt reading happens before the first delta, so it does not slow the reading.
+      yield* TestClock.adjust("3 seconds");
+      yield* fake.emit({
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "ok" },
+      });
+      yield* TestClock.adjust("2 seconds");
+      yield* fake.emit({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "ok" }],
+          usage: { input: 1_000, output: 201, totalTokens: 1_201 },
+          stopReason: "stop",
+        },
+      });
+      const live = yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" &&
+          event.providerTurn.tokenUsage?.outputTokensPerSecond !== undefined,
+      );
+      assert.equal(
+        live.type === "provider_turn.updated"
+          ? live.providerTurn.tokenUsage?.outputTokensPerSecond
+          : undefined,
+        100,
+      );
+      yield* fake.emit({ type: "agent_settled" });
+      const completed = yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+      );
+      assert.equal(
+        completed.type === "provider_turn.updated"
+          ? completed.providerTurn.tokenUsage?.outputTokensPerSecond
+          : undefined,
+        100,
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect.each(["turn window", "full tree"] as const)(
     "finishes a turn whose %s has a parentId cycle",
     (cycleIn) =>

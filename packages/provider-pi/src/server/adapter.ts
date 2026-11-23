@@ -361,8 +361,12 @@ function compactionTitle(status: PiCompactionStatus): string {
 
 type PiMessageTokenUsage = Pick<
   OrchestrationV2ProviderTurnTokenUsage,
-  "inputTokens" | "cachedInputTokens" | "outputTokens"
+  "inputTokens" | "cachedInputTokens" | "outputTokens" | "outputTokensPerSecond"
 >;
+
+/** Replies shorter than this give a noisy speed, so they keep the previous reading. */
+const PI_SPEED_MIN_OUTPUT_TOKENS = 8;
+const PI_SPEED_MIN_DURATION_MS = 250;
 
 interface ActivePiTurn {
   readonly turnInput: ProviderAdapter.ProviderAdapterV2TurnInput;
@@ -383,6 +387,9 @@ interface ActivePiTurn {
   latestCompactionAfterTokens: number | null;
   lastLiveUsedTokens: number | null;
   lastMessageUsage: PiMessageTokenUsage | undefined;
+  /** When the current assistant message streamed its first delta; prompt reading is before it. */
+  messageFirstDeltaAtMs: number | null;
+  lastOutputTokensPerSecond: number | undefined;
   settleProbeGeneration: number;
   /** An extension may start compaction immediately after Pi emits agent_settled. */
   settleWhenIdle: boolean;
@@ -1075,7 +1082,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         Effect.fnUntraced(function* (turn: ActivePiTurn, usage: unknown) {
           const usedTokens = nonNegativeInteger(usage, "totalTokens");
           if (usedTokens !== undefined && usedTokens > 0) {
-            turn.lastMessageUsage = piMessageTokenUsage(usage);
+            turn.lastMessageUsage = {
+              ...piMessageTokenUsage(usage),
+              ...(turn.lastOutputTokensPerSecond === undefined
+                ? {}
+                : { outputTokensPerSecond: turn.lastOutputTokensPerSecond }),
+            };
           }
           if (
             usedTokens === undefined ||
@@ -2353,6 +2365,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (turn !== null && role === "assistant") {
               turn.sawAgentActivity = true;
               turn.messageOrdinal += 1;
+              turn.messageFirstDeltaAtMs = null;
             }
             const readSteer = role === "user" ? turn?.unreadSteers.shift() : undefined;
             if (turn !== null && readSteer !== undefined) {
@@ -2372,6 +2385,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             yield* reportLiveUsage(turn, event["usage"]);
             const delta = event["assistantMessageEvent"];
             const deltaType = recordString(delta, "type");
+            if (turn.messageFirstDeltaAtMs === null && deltaType?.endsWith("_delta") === true) {
+              turn.messageFirstDeltaAtMs = DateTime.toEpochMillis(yield* DateTime.now);
+            }
             const contentIndex = recordNumber(delta, "contentIndex") ?? 0;
             if (deltaType === "text_start" || deltaType === "thinking_start") {
               // A provider that reconnects mid-block starts it again; its earlier text is abandoned.
@@ -2409,6 +2425,26 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             const message = event["message"];
             if (recordString(message, "role") !== "assistant") return;
             yield* completeOpenStreamItems(turn);
+            const messageOutputTokens = nonNegativeInteger(recordField(message, "usage"), "output");
+            const firstDeltaAtMs = turn.messageFirstDeltaAtMs;
+            turn.messageFirstDeltaAtMs = null;
+            if (firstDeltaAtMs !== null && messageOutputTokens !== undefined) {
+              const elapsedMs = DateTime.toEpochMillis(yield* DateTime.now) - firstDeltaAtMs;
+              if (
+                messageOutputTokens >= PI_SPEED_MIN_OUTPUT_TOKENS &&
+                elapsedMs >= PI_SPEED_MIN_DURATION_MS
+              ) {
+                // The first delta already carries a token, so it does not count against the clock.
+                turn.lastOutputTokensPerSecond =
+                  Math.round(((messageOutputTokens - 1) / elapsedMs) * 10_000) / 10;
+                turn.lastMessageUsage = {
+                  ...turn.lastMessageUsage,
+                  outputTokensPerSecond: turn.lastOutputTokensPerSecond,
+                };
+                turn.lastLiveUsedTokens = null;
+                yield* reportLiveUsage(turn, recordField(message, "usage"));
+              }
+            }
             const reportedProvider = recordString(message, "provider");
             const reportedModelId = recordString(message, "model");
             if (reportedProvider && reportedModelId) {
@@ -3534,6 +3570,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               latestCompactionAfterTokens: null,
               lastLiveUsedTokens: null,
               lastMessageUsage: undefined,
+              messageFirstDeltaAtMs: null,
+              lastOutputTokensPerSecond: undefined,
               settleProbeGeneration: 0,
               settleWhenIdle: false,
               compactionCancelled: false,

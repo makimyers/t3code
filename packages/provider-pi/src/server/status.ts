@@ -81,6 +81,8 @@ const PI_DEFAULT_MODEL: ServerProviderModel = {
 interface PiDiscovery extends PiDiscoveredCommands {
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly authenticated: boolean;
+  /** The name Pi gives its active (default) model, when Pi lists that model. */
+  readonly activeModelName: string | undefined;
   /** Pi's active model when Pi lists no model of its provider, so it cannot start a turn. */
   readonly unavailableActiveModel: { readonly provider: string; readonly id: string } | undefined;
   /** Pi without extensions can load no model, so text generation fails for every entry. */
@@ -90,9 +92,15 @@ interface PiDiscovery extends PiDiscoveredCommands {
 function piModelsFromSettings(
   customModels: ReadonlyArray<CustomModelSetting> | undefined,
   discovered: ReadonlyArray<ServerProviderModel> = [],
+  activeModelName?: string,
 ): ReadonlyArray<ServerProviderModel> {
+  // Name the default after the model it runs, so the picker shows which model Pi uses.
+  const defaultModel =
+    activeModelName === undefined
+      ? PI_DEFAULT_MODEL
+      : { ...PI_DEFAULT_MODEL, name: `${activeModelName} (default)` };
   return providerModelsFromSettings(
-    [PI_DEFAULT_MODEL, ...discovered],
+    [defaultModel, ...discovered],
     customModels ?? [],
     EMPTY_PI_MODEL_CAPABILITIES,
   );
@@ -290,6 +298,11 @@ const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function
     slashCommands: withPiBuiltinSlashCommands(slashCommands),
     skills,
     authenticated: discoveredModels.length > 0,
+    activeModelName:
+      activeProvider === undefined || activeModelId === undefined
+        ? undefined
+        : discoveredModels.find((model) => model.slug === `${activeProvider}/${activeModelId}`)
+            ?.name,
     unavailableActiveModel:
       activeProvider !== undefined &&
       activeModelId !== undefined &&
@@ -627,7 +640,11 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
   }
 
   const discovery = discoveryExit.value.value;
-  const models = piModelsFromSettings(piSettings.customModels, discovery.models);
+  const models = piModelsFromSettings(
+    piSettings.customModels,
+    discovery.models,
+    discovery.activeModelName,
+  );
   const message = !discovery.authenticated
     ? "Pi has no usable models. Run `pi` in a terminal and use /login, or configure an API key in ~/.pi/agent."
     : discovery.unavailableActiveModel === undefined

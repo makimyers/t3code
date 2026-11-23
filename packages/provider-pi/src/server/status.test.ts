@@ -379,6 +379,33 @@ describe("PiProvider", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("names Pi's default after the model Pi runs", () =>
+    Effect.gen(function* () {
+      const spawner = yield* piDiscoverySpawner(
+        {
+          models: [
+            { provider: "tack-local", id: "qwen", name: "Qwen Flash · Avalon fast" },
+            { provider: "demo", id: "other", name: "Other" },
+          ],
+        },
+        undefined,
+        undefined,
+        { state: { model: { provider: "tack-local", id: "qwen" } } },
+      );
+      const snapshot = yield* checkPiProviderStatus(settings).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      assert.deepEqual(
+        snapshot.models.map((model) => [model.slug, model.name]),
+        [
+          ["default", "Qwen Flash · Avalon fast (default)"],
+          ["tack-local/qwen", "Qwen Flash · Avalon fast"],
+          ["demo/other", "Other"],
+        ],
+      );
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("preserves normal discovery when the extension-free model listing times out", () =>
     Effect.gen(function* () {
       const modelRequested = yield* Deferred.make<void>();
