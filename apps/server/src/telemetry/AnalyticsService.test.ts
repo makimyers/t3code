@@ -324,14 +324,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
       }),
   );
 
-  it.effect("sends nothing on a CI runner unless the environment opts in", () =>
+  it.effect("sends usage data only with explicit opt-in", () =>
     Effect.gen(function* () {
-      const onCi = (telemetryEnv: Parameters<typeof analyticsLayerWith>[2]) =>
-        sendFor(1, respondWithStatus(204), recordTwentyEvents, undefined, telemetryEnv).pipe(
-          Effect.provideService(HostProcess.Environment, { GITHUB_ACTIONS: "true" }),
-        );
-      assert.deepEqual(yield* onCi({}), []);
-      assert.equal((yield* onCi({ T3CODE_TELEMETRY_ENABLED: true })).length, 1);
+      const send = (env: Parameters<typeof analyticsLayerWith>[2]) =>
+        sendFor(1, respondWithStatus(204), recordTwentyEvents, undefined, env);
+      assert.deepEqual(yield* send({}), []);
+      assert.equal((yield* send({ T3CODE_TELEMETRY_ENABLED: true })).length, 1);
     }),
   );
 
